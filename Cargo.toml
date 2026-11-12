@@ -2,7 +2,10 @@
 name = "terminalib"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 
 [dependencies]
 base64 = "0.22.1"
 libc = "0.2.183"
+unicode-width = "0.2"
+unicode-segmentation = "1.12"

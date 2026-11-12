@@ -75,12 +75,12 @@ fn mouse_test() -> io::Result<()> {
         if flag {
             let mouse_string = String::from_utf8_lossy(&buff);
             t.posprint(t.height / 2, 0, format!("{:?}", mouse_string));
-            t.posprint(t.height / 2 + 1, 0, format!("{:?}", &buff));
+            t.posprint(t.height / 2 + 1, 0, format!("{buff:?}"));
         }
 
         // let mut m = t.mouse.lock().unwrap();
         // t.posprint(t.height / 2 + 2, 0, format!("Mouse {} {}", m.x, m.y));
-        t.posprint(0, t.width / 2 - 2, format!("{}", flag));
+        t.posprint(0, t.width / 2 - 2, flag.to_string());
 
         t.refresh()?;
 
@@ -130,10 +130,10 @@ fn wannasimplicity() -> io::Result<()> {
                 ),
             );
             match event {
-                MouseEvent::LEFT => t.posprint(y, x, " ".to_string()),
-                MouseEvent::SPAMLEFT => t.posprint(y, x, " ".to_string()),
-                MouseEvent::WHEELUP => t.posprint(y, x, " ".to_string()),
-                MouseEvent::WHEELDOWN => t.posprint(y, x, " ".to_string()),
+                MouseEvent::LEFT
+                | MouseEvent::SPAMLEFT
+                | MouseEvent::WHEELUP
+                | MouseEvent::WHEELDOWN => t.posprint(y, x, " "),
                 _ => {}
             }
         }

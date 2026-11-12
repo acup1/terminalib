@@ -13,9 +13,8 @@ fn rect() -> io::Result<()> {
     t.refresh()?;
 
     loop {
-        match t.getch(100) {
-            'q' => break,
-            _ => {}
+        if t.getch(100) == 'q' {
+            break;
         }
     }
     t.restoreall();

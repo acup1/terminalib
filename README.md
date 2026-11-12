@@ -54,6 +54,14 @@ println!("{}, {} (shift: {})", mouse.x, mouse.y, mouse.modifiers.shift);
 Any-event tracking depends on xterm-compatible mouse support and reports
 terminal cell coordinates, not pixels. It can generate a high volume of input.
 
+## Bracketed paste
+
+Call `terminal.enable_bracketed_paste()` to receive a paste as one `KEY_PASTE`
+event, then use `terminal.take_paste()` to retrieve its text. Embedded newlines
+are data, not Enter key events. Split UTF-8, long paths and split paste markers
+are buffered across reads; following keys remain queued. Payloads are bounded
+to 4 MiB. Paste mode is disabled by `restore()`/drop.
+
 ## Framebuffer rendering
 
 `WindowManager` composites every layer into a framebuffer. After the first

@@ -7,11 +7,9 @@ fn color_test() {
         fg: color::Color::Red,
     };
 
-    println!(
-        "{}{}text{}",
-        col.to_string(),
-        String::from(col),
-        color::Color::reset(),
-    );
-    assert!(true);
+    let displayed = col.to_string();
+    let converted = String::from(col);
+    println!("{displayed}{converted}text{}", color::Color::reset());
+    assert!(!displayed.is_empty());
+    assert!(!converted.is_empty());
 }

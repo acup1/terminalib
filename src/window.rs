@@ -1,15 +1,16 @@
-use crate::framebuffer::{CellStyle, FrameBuffer, PresentStats};
+use crate::framebuffer::{CellStyle, FrameBuffer, PresentStats, grapheme_width};
 use crate::layout::Rect;
 use crate::terminal::{Mouse, MouseEvent, Terminal};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub type WindowId = u64;
 pub type WindowUpdater = Box<dyn FnMut(&mut Window)>;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Cell {
-    pub sym: char,
+    pub sym: String,
     pub color: Option<String>,
     pub style: CellStyle,
     pub x: i32,
@@ -85,7 +86,7 @@ impl Window {
         self.content.insert(
             (y, x),
             Cell {
-                sym: character,
+                sym: character.to_string(),
                 color: None,
                 style: CellStyle::default(),
                 x,
@@ -98,7 +99,20 @@ impl Window {
         self.content.insert(
             (y, x),
             Cell {
-                sym: character,
+                sym: character.to_string(),
+                color: None,
+                style,
+                x,
+                y,
+            },
+        );
+    }
+
+    pub fn posstyled_grapheme(&mut self, y: i32, x: i32, grapheme: &str, style: CellStyle) {
+        self.content.insert(
+            (y, x),
+            Cell {
+                sym: grapheme.to_owned(),
                 color: None,
                 style,
                 x,
@@ -108,14 +122,18 @@ impl Window {
     }
 
     pub fn posprint(&mut self, y: i32, x: i32, text: impl AsRef<str>) {
-        for (offset, character) in text.as_ref().chars().enumerate() {
-            self.poswchar(y, x + offset as i32, character);
+        let mut offset = 0;
+        for grapheme in UnicodeSegmentation::graphemes(text.as_ref(), true) {
+            self.posstyled_grapheme(y, x + offset, grapheme, CellStyle::default());
+            offset += grapheme_width(grapheme).max(1) as i32;
         }
     }
 
     pub fn posprint_styled(&mut self, y: i32, x: i32, text: impl AsRef<str>, style: CellStyle) {
-        for (offset, character) in text.as_ref().chars().enumerate() {
-            self.posstyled(y, x + offset as i32, character, style);
+        let mut offset = 0;
+        for grapheme in UnicodeSegmentation::graphemes(text.as_ref(), true) {
+            self.posstyled_grapheme(y, x + offset, grapheme, style);
+            offset += grapheme_width(grapheme).max(1) as i32;
         }
     }
 
@@ -215,10 +233,7 @@ impl Window {
 fn contains(window: &Window, mouse: Mouse) -> bool {
     let x = i32::from(mouse.x);
     let y = i32::from(mouse.y);
-    y >= window.y
-        && y <= window.y + window.height - 1
-        && x >= window.x
-        && x <= window.x + window.width - 1
+    y >= window.y && y < window.y + window.height && x >= window.x && x < window.x + window.width
 }
 
 #[derive(Default)]
@@ -332,26 +347,57 @@ impl WindowManager {
             }
             window.run_updater();
         }
-        self.framebuffer.present(writer)
+        self.framebuffer.present_clean_rows(writer)
     }
 }
 
 fn render_window(window: &Window, framebuffer: &mut FrameBuffer) {
-    if window.filling && window.width > 2 && window.height > 2 {
+    // Borderless panels still own their full rectangle. Their content cells
+    // retain the normal one-cell inset, so fill the outer strips as well.
+    if window.border == -1
+        && let Some(background) = window.border_style.background
+    {
+        for row in 0..window.height {
+            for column in 0..window.width {
+                framebuffer.put_styled(
+                    window.y + row,
+                    window.x + column,
+                    ' ',
+                    CellStyle::background(background),
+                );
+            }
+        }
+    }
+    if window.filling
+        && (window.border != -1 || window.border_style.background.is_none())
+        && window.width > 2
+        && window.height > 2
+    {
         for row in 0..window.height - 2 {
             for column in 0..window.width - 2 {
                 framebuffer.put(window.y + row + 1, window.x + column + 1, ' ');
             }
         }
     }
+    let mut covered_row = -1;
+    let mut covered_until = 0;
     for cell in window.cells() {
+        if cell.y == covered_row && cell.x < covered_until {
+            continue;
+        }
         if cell.y >= 0 && cell.x >= 0 && cell.y < window.height - 2 && cell.x < window.width - 2 {
-            framebuffer.put_styled(
+            let width = grapheme_width(&cell.sym).max(1) as i32;
+            if cell.x + width > window.width - 2 {
+                continue;
+            }
+            framebuffer.put_grapheme_styled(
                 window.y + cell.y + 1,
                 window.x + cell.x + 1,
-                cell.sym,
+                &cell.sym,
                 cell.style,
             );
+            covered_row = cell.y;
+            covered_until = cell.x + width;
         }
     }
     if window.border != -1 {
@@ -404,6 +450,7 @@ fn draw_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Rgb;
 
     #[test]
     fn content_is_updated_and_kept_in_coordinate_order() {
@@ -413,8 +460,8 @@ mod tests {
         window.poswchar(2, 1, 'c');
         let cells: Vec<_> = window.cells().cloned().collect();
         assert_eq!(cells.len(), 2);
-        assert_eq!((cells[0].y, cells[0].x, cells[0].sym), (0, 2, 'b'));
-        assert_eq!((cells[1].y, cells[1].x, cells[1].sym), (2, 1, 'c'));
+        assert_eq!((cells[0].y, cells[0].x, cells[0].sym.as_str()), (0, 2, "b"));
+        assert_eq!((cells[1].y, cells[1].x, cells[1].sym.as_str()), (2, 1, "c"));
     }
 
     #[test]
@@ -458,14 +505,14 @@ mod tests {
         assert!(lower.drag);
         assert_eq!(lower.mouse_x, 0);
         assert_eq!(stats.changed_cells, 20 * 40);
-        assert_eq!(stats.cursor_moves, 20);
-        assert_eq!(manager.framebuffer().get(0, 1).unwrap().symbol, 'u');
-        assert_eq!(manager.framebuffer().get(2, 3).unwrap().symbol, ' ');
+        assert!(stats.cursor_moves >= 20);
+        assert_eq!(manager.framebuffer().get(0, 1).unwrap().symbol, "u");
+        assert_eq!(manager.framebuffer().get(2, 3).unwrap().symbol, " ");
         assert!(!output.is_empty());
     }
 
     #[test]
-    fn manager_emits_only_changed_cells_after_the_first_frame() {
+    fn manager_repaints_only_changed_rows_after_the_first_frame() {
         let mut manager = WindowManager::new();
         let id = manager.new_window(0);
         let window = manager.get_mut(id).unwrap();
@@ -493,9 +540,58 @@ mod tests {
         let stats = manager
             .render_to_with_stats(5, 10, Mouse::default(), &mut changed)
             .unwrap();
-        assert_eq!(String::from_utf8(changed).unwrap(), "\x1b[3;3Hb");
-        assert_eq!(stats.changed_cells, 1);
+        assert_eq!(
+            String::from_utf8(changed).unwrap(),
+            "\x1b[0m\x1b[3;1H\x1b[2K  b"
+        );
+        assert_eq!(stats.changed_cells, 10);
         assert_eq!(stats.cursor_moves, 1);
+    }
+
+    #[test]
+    fn opaque_borderless_window_fills_outer_edges() {
+        let mut manager = WindowManager::new();
+        let id = manager.new_window(0);
+        let window = manager.get_mut(id).unwrap();
+        window.x = 1;
+        window.y = 1;
+        window.width = 5;
+        window.height = 4;
+        window.border = -1;
+        let color = Rgb::new(12, 34, 56);
+        window.border_style = CellStyle::background(color);
+        window.posstyled(0, 0, 'A', CellStyle::new(None, Some(color)));
+        manager
+            .render_to(8, 8, Mouse::default(), &mut Vec::new())
+            .unwrap();
+        for y in 1..5 {
+            for x in 1..6 {
+                assert_eq!(
+                    manager.framebuffer().get(y, x).unwrap().style.background,
+                    Some(color)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn background_spaces_do_not_destroy_wide_glyph_continuations() {
+        let mut manager = WindowManager::new();
+        let id = manager.new_window(0);
+        let window = manager.get_mut(id).unwrap();
+        window.width = 12;
+        window.height = 4;
+        window.border = 0;
+        for x in 0..10 {
+            window.poswchar(0, x, ' ');
+        }
+        window.posstyled_grapheme(0, 0, "🙂", CellStyle::default());
+        window.posstyled_grapheme(0, 3, "\u{f07b}", CellStyle::default());
+        manager
+            .render_to(4, 12, Mouse::default(), &mut Vec::new())
+            .unwrap();
+        assert!(manager.framebuffer().get(1, 2).unwrap().continuation);
+        assert!(manager.framebuffer().get(1, 5).unwrap().continuation);
     }
 
     #[test]

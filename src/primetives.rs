@@ -21,11 +21,11 @@ pub struct Primetive {
 impl Primetive {
     pub fn new(drawing_type: PrimetiveType, x: u16, y: u16, dx: u16, dy: u16) -> Self {
         Primetive {
-            drawing_type: drawing_type,
-            x: x,
-            y: y,
-            dx: dx,
-            dy: dy,
+            drawing_type,
+            x,
+            y,
+            dx,
+            dy,
             layer: 0,
         }
     }
@@ -66,7 +66,11 @@ impl Iterator for Primetive {
             n if n >= self.dy => None,
             _ => Some(format!("│{}│", cursor::right(self.dx - 2))),
         };
-        self.layer = if self.layer >= self.dy { 0 } else { self.layer + 1 };
+        self.layer = if self.layer >= self.dy {
+            0
+        } else {
+            self.layer + 1
+        };
         ret
     }
 }

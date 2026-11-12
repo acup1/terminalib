@@ -2,7 +2,7 @@ use crate::{
     color::{Rgb, Rgba},
     terminal::Terminal,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{
     error::Error,
     fmt, fs,
@@ -390,6 +390,25 @@ impl TerminalImage {
         Ok(())
     }
 
+    /// Places the image at an explicit Kitty graphics z-index.
+    pub fn place_at_z(
+        &self,
+        writer: &mut impl Write,
+        columns: u32,
+        rows: u32,
+        z_index: i32,
+    ) -> Result<(), GraphicsError> {
+        self.require_uploaded()?;
+        write_command(
+            writer,
+            &format!(
+                "a=p,i={},p=1,c={},r={},z={},C=1,q=2",
+                self.id, columns, rows, z_index
+            ),
+        )?;
+        Ok(())
+    }
+
     pub fn upload_and_place(
         &mut self,
         writer: &mut impl Write,
@@ -398,6 +417,17 @@ impl TerminalImage {
     ) -> Result<(), GraphicsError> {
         self.upload(writer)?;
         self.place(writer, columns, rows)
+    }
+
+    pub fn upload_and_place_at_z(
+        &mut self,
+        writer: &mut impl Write,
+        columns: u32,
+        rows: u32,
+        z_index: i32,
+    ) -> Result<(), GraphicsError> {
+        self.upload(writer)?;
+        self.place_at_z(writer, columns, rows, z_index)
     }
 
     /// Replaces the root frame in-place, preserving the image ID and placement.
@@ -504,16 +534,14 @@ pub fn query_support(terminal: &mut Terminal, timeout: Duration) -> io::Result<b
     if restore_mode {
         terminal.enable_raw_mode()?;
     }
-    if restore_alt_buffer {
-        if let Err(error) = terminal.enable_alt_buffer() {
-            if terminal.alt_buffer {
-                let _ = terminal.disable_alt_buffer();
-            }
-            if restore_mode {
-                let _ = terminal.disable_raw_mode();
-            }
-            return Err(error);
+    if restore_alt_buffer && let Err(error) = terminal.enable_alt_buffer() {
+        if terminal.alt_buffer {
+            let _ = terminal.disable_alt_buffer();
         }
+        if restore_mode {
+            let _ = terminal.disable_raw_mode();
+        }
+        return Err(error);
     }
 
     let result = (|| {
@@ -553,15 +581,11 @@ pub fn query_support(terminal: &mut Terminal, timeout: Duration) -> io::Result<b
     })();
 
     let mut cleanup_error = None;
-    if restore_alt_buffer {
-        if let Err(error) = terminal.disable_alt_buffer() {
-            cleanup_error = Some(error);
-        }
+    if restore_alt_buffer && let Err(error) = terminal.disable_alt_buffer() {
+        cleanup_error = Some(error);
     }
-    if restore_mode {
-        if let Err(error) = terminal.disable_raw_mode() {
-            cleanup_error.get_or_insert(error);
-        }
+    if restore_mode && let Err(error) = terminal.disable_raw_mode() {
+        cleanup_error.get_or_insert(error);
     }
 
     match result {
@@ -615,14 +639,13 @@ fn contains_device_attributes_response(response: &[u8]) -> bool {
         .position(|window| window == b"\x1b[")
     {
         let body = &response[offset + start + 2..];
-        if let Some(end) = body.iter().position(|byte| byte.is_ascii_alphabetic()) {
-            if body[end] == b'c'
-                && body[..end]
-                    .iter()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'?' | b'>' | b';' | b':'))
-            {
-                return true;
-            }
+        if let Some(end) = body.iter().position(|byte| byte.is_ascii_alphabetic())
+            && body[end] == b'c'
+            && body[..end]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'?' | b'>' | b';' | b':'))
+        {
+            return true;
         }
         offset += start + 2;
     }
@@ -680,6 +703,18 @@ mod tests {
         assert!(output.contains("a=f,i=7,r=1,X=1,f=32,s=40,v=40,q=2,m=1"));
         assert!(output.contains("\x1b_Ga=f,q=2,m=0;"));
         assert!(output.contains("a=a,i=7,c=1,q=2"));
+    }
+
+    #[test]
+    fn places_images_at_an_explicit_z_index() {
+        let data = ImageData::solid(1, 1, Rgba::WHITE).unwrap();
+        let mut image = TerminalImage::new(9, data).unwrap();
+        let mut output = Vec::new();
+        image.upload(&mut output).unwrap();
+        image.place_at_z(&mut output, 20, 10, i32::MAX).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("a=p,i=9,p=1,c=20,r=10,z=2147483647,C=1,q=2"));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::io;
 use std::time::Duration;
 use terminalib::{
     terminal::{self, MouseEvent},
-    tgp::{query_support, ImageData, TerminalImage},
+    tgp::{ImageData, TerminalImage, query_support},
 };
 
 fn img_from_path() -> io::Result<()> {
